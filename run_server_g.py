@@ -75,13 +75,14 @@ def kill_port_processes(ports=[8000, 8001]):
 def run_gunicorn():
     """Run the server using Gunicorn (high performance)"""
     cmd = [
-        sys.executable, "-m", "gunicorn",
+        "python3", "-m", "gunicorn",
         "--bind", "127.0.0.1:8000",
-        "--workers", "4",
+        "--workers", "1", # Changed from 4 to 1
         "--worker-class", "sync",
         "--timeout", "30",
-        "--log-level", "critical",
-        "--error-logfile", "-",
+        "--log-level", "debug", # Changed from critical to debug
+        "--error-logfile", "gunicorn_stderr.log", # Redirect stderr to a file
+        "--access-logfile", "gunicorn_stdout.log", # Redirect stdout to a file
         "mock_server_g:app"
     ]
     
@@ -99,20 +100,17 @@ def run_flask():
     app.run(
         host="127.0.0.1",
         port=8000,
-        debug=False,
+        debug=False, # Enable debug mode
         threaded=True
     )
 
 
 if __name__ == "__main__":
-    os.environ["FLASK_ENV"] = "production"
+    os.environ["FLASK_ENV"] = "production" # Set to development for debug
 
     # Kill any processes using our ports before starting
     print("🧹 Cleaning up ports 8000 and 8001...")
-    kill_port_processes([8000, 8001])
-    
-    # Prefer Gunicorn for production performance
-    if HAS_GUNICORN:
-        run_gunicorn()
-    else:
-        run_flask()
+    kill_port_processes([8000,8001])
+
+    # Temporarily force Flask's built-in server for debugging
+    run_flask()
