@@ -1,0 +1,2312 @@
+openapi: 3.0.3
+info:
+  title: Advertising Platform API
+  description: |
+    Domain-driven API for managing advertising campaigns, tracking performance,
+    and optimizing conversions. Built from bounded contexts rather than raw SQL schema.
+
+    ## Key Features
+    - **Domain-Driven Design**: API designed around business domains, not database tables
+    - **Property-Based Testing Ready**: Comprehensive OpenAPI spec for automated testing
+    - **Multi-Level Tracking**: 5-level sub-tracking (sub1-sub5) and affiliate tracking
+    - **Fraud Detection**: Built-in bot detection and fraud scoring
+    - **A/B Testing**: Landing page optimization with control/test groups
+    - **Real-time Analytics**: Performance metrics with multiple breakdowns
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: api@advertising-platform.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://127.0.0.1:8000/v1
+    description: Local development server (port 8000)
+  - url: http://127.0.0.1:8001/v1
+    description: Local development server (port 8001)
+  - url: https://api.advertising-platform.com/v1
+    description: Production server
+  - url: https://staging-api.advertising-platform.com/v1
+    description: Staging server
+
+security:
+  - bearerAuth: []
+  - oauth2:
+      - campaign:read
+      - campaign:write
+      - analytics:read
+
+# Global rate limiting (applied to all endpoints)
+x-rate-limits:
+  authenticated:
+    requests_per_minute: 60
+    requests_per_hour: 1000
+  public:
+    requests_per_minute: 10
+    burst_limit: 50
+
+# ============================================================================
+# SECURITY SCHEMES
+# ============================================================================
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for authenticated users
+      x-bearerInfoFunc: mock_server.bearer_token_auth
+
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for partner integrations
+
+    oauth2:
+      type: oauth2
+      description: OAuth 2.0 authorization for third-party applications
+      flows:
+        authorizationCode:
+          authorizationUrl: https://auth.advertising-platform.com/oauth/authorize
+          tokenUrl: https://auth.advertising-platform.com/oauth/token
+          scopes:
+            campaign:read: Read campaign data
+            campaign:write: Create and modify campaigns
+            campaign:delete: Delete campaigns
+            analytics:read: Read analytics and performance data
+            traffic:read: Read traffic and click data
+            admin: Full administrative access
+
+# ============================================================================
+# COMMON SCHEMAS
+# ============================================================================
+
+  schemas:
+
+    # Common Types
+    Money:
+      type: object
+      description: Monetary value with currency
+      properties:
+        amount:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 999999999.99
+          example: 25.50
+          description: Amount in the specified currency
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          example: "USD"
+          default: "USD"
+          description: ISO 4217 currency code (3 uppercase letters)
+      required:
+        - amount
+        - currency
+      additionalProperties: false
+
+    OfferPerformance:
+      type: object
+      properties:
+        clicks:
+          type: integer
+          format: int64
+          example: 1500
+        conversions:
+          type: integer
+          format: int64
+          example: 45
+        revenue:
+          $ref: '#/components/schemas/Money'
+        cost:
+          $ref: '#/components/schemas/Money'
+        cr:
+          type: number
+          format: float
+          example: 0.03
+        epc:
+          $ref: '#/components/schemas/Money'
+        roi:
+          type: number
+          format: float
+          example: 2.15
+      required:
+        - clicks
+        - conversions
+        - revenue
+        - cost
+        - cr
+        - epc
+        - roi
+      additionalProperties: false
+
+    OfferAutoPause:
+      type: object
+      properties:
+        threshold:
+          type: number
+          format: float
+          example: 0.02
+        minClicksBeforePause:
+          type: integer
+          example: 1000
+      required:
+        - threshold
+        - minClicksBeforePause
+      additionalProperties: false
+
+    OfferType:
+      type: string
+      enum:
+        - direct
+        - email
+        - phone
+      example: "direct"
+
+    OfferMetrics:
+      type: object
+      properties:
+        offerId:
+          type: string
+          example: "offer_123"
+        name:
+          type: string
+          example: "Summer Sale Offer"
+        metrics:
+          $ref: '#/components/schemas/AnalyticsMetrics'
+      required:
+        - offerId
+        - name
+        - metrics
+      additionalProperties: false
+
+    # Click Tracking Schemas
+    ClickRecord:
+      type: object
+      description: Complete click tracking record with fraud detection data
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique click identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        cid:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          description: Campaign ID
+          example: 123
+        ip:
+          type: string
+          format: ipv4
+          description: Client IP address
+          example: "192.168.1.100"
+        ua:
+          type: string
+          maxLength: 1000
+          description: User agent string
+          example: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        ref:
+          type: string
+          format: uri
+          maxLength: 2000
+          nullable: true
+          description: HTTP referrer URL
+          example: "https://facebook.com/ad/123"
+        isValid:
+          type: integer
+          enum: [0, 1]
+          description: Click validity flag (1=valid, 0=invalid/fraudulent)
+          example: 1
+        ts:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Unix timestamp of click
+          example: 1640995200
+        # Sub-tracking parameters (5-level deep tracking)
+        sub1:
+          type: string
+          maxLength: 255
+          description: "Creative ID"
+          example: "fb_ad_15"
+        sub2:
+          type: string
+          maxLength: 255
+          description: "Traffic source"
+          example: "facebook"
+        sub3:
+          type: string
+          maxLength: 255
+          description: "Ad set/company"
+          example: "adset_12"
+        sub4:
+          type: string
+          maxLength: 255
+          description: "Ad version"
+          example: "video1"
+        sub5:
+          type: string
+          maxLength: 255
+          description: "Keyword/audience"
+          example: "lookalike78"
+        # Affiliate network parameters
+        clickId:
+          type: string
+          maxLength: 255
+          description: "Click ID for postbacks"
+          example: "USERCLICK123"
+        affSub:
+          type: string
+          maxLength: 255
+          description: "Affiliate sub ID"
+          example: "aff_sub_123"
+        affSub2:
+          type: string
+          maxLength: 255
+          description: "Affiliate sub ID 2"
+        affSub3:
+          type: string
+          maxLength: 255
+          description: "Affiliate sub ID 3"
+        affSub4:
+          type: string
+          maxLength: 255
+          description: "Affiliate sub ID 4"
+        affSub5:
+          type: string
+          maxLength: 255
+          description: "Affiliate sub ID 5"
+        # Fraud detection
+        fraudScore:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          description: Fraud probability score (0.0=legitimate, 1.0=fraudulent)
+          example: 0.8
+        fraudReason:
+          type: string
+          nullable: true
+          description: Reason for fraud detection
+          enum: ["bot_pattern_detected", "missing_user_agent", "ip_blacklisted", "user_agent_blocked", "suspicious_referrer_length", "forced_bot_detection"]
+          example: "bot_pattern_detected"
+        # Additional tracking
+        landingPageId:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: ID of landing page used
+          example: 456
+        campaignOfferId:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: ID of offer used
+          example: 789
+        trafficSourceId:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: ID of traffic source
+          example: 101
+        conversionType:
+          $ref: '#/components/schemas/ConversionType'
+      required:
+        - id
+        - cid
+        - ip
+        - ua
+        - isValid
+        - ts
+
+    ClickList:
+      type: object
+      properties:
+        clicks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClickRecord'
+        total:
+          type: integer
+          format: int64
+          example: 1500
+        limit:
+          type: integer
+          example: 50
+        offset:
+          type: integer
+          example: 0
+      required:
+        - clicks
+        - total
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          default: 1
+          example: 1
+        pageSize:
+          type: integer
+          minimum: 1
+          default: 20
+          example: 20
+        totalItems:
+          type: integer
+          format: int64
+          example: 150
+        totalPages:
+          type: integer
+          example: 8
+        hasNext:
+          type: boolean
+          example: true
+        hasPrev:
+          type: boolean
+          example: false
+        _links:
+          $ref: '#/components/schemas/PaginationLinks'
+      required:
+        - page
+        - pageSize
+        - totalItems
+        - totalPages
+        - hasNext
+        - hasPrev
+
+    PaginationLinks:
+      type: object
+      properties:
+        first:
+          type: string
+          format: uri
+          example: "/api/v1/campaigns?page=1&pageSize=20"
+        prev:
+          type: string
+          format: uri
+          example: "/api/v1/campaigns?page=1&pageSize=20"
+        next:
+          type: string
+          format: uri
+          example: "/api/v1/campaigns?page=2&pageSize=20"
+        last:
+          type: string
+          format: uri
+          example: "/api/v1/campaigns?page=8&pageSize=20"
+
+    # Error Response
+    Error:
+      type: object
+      description: Standardized error response format
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              description: Machine-readable error code
+              example: VALIDATION_ERROR
+              enum:
+                - VALIDATION_ERROR
+                - NOT_FOUND
+                - CONFLICT
+                - INVARIANT_VIOLATION
+                - UNAUTHENTICATED
+                - UNAUTHORIZED
+                - METHOD_NOT_ALLOWED
+                - NOT_ACCEPTABLE
+                - UNSUPPORTED_MEDIA_TYPE
+                - TOO_MANY_REQUESTS
+                - INTERNAL_SERVER_ERROR
+                - SERVICE_UNAVAILABLE
+            message:
+              type: string
+              description: Human-readable error message
+              example: "Validation failed: name is required"
+            details:
+              type: object
+              description: Optional object for detailed validation errors
+
+    ProblemDetails:
+      type: object
+      description: RFC 7807 Problem Details format for HTTP API errors
+      properties:
+        type:
+          type: string
+          format: uri
+          description: A URI reference that identifies the problem type
+          example: "about:blank"
+        title:
+          type: string
+          description: A short, human-readable summary of the problem type
+          example: "Bad Request"
+        detail:
+          type: string
+          description: A human-readable explanation specific to this occurrence of the problem
+          example: "'payout' is a required property"
+        status:
+          type: integer
+          description: The HTTP status code
+          example: 400
+        instance:
+          type: string
+          format: uri
+          description: A URI reference that identifies the specific occurrence of the problem
+      required:
+        - type
+        - title
+        - status
+
+    # Enums
+    CampaignStatus:
+      type: string
+      enum:
+        - draft
+        - active
+        - paused
+        - completed
+        - cancelled
+      example: "active"
+
+    PageType:
+      type: string
+      enum:
+        - direct
+        - squeeze
+        - bridge
+        - thank_you
+      example: "squeeze"
+
+    ConversionType:
+      type: string
+      enum:
+        - lead
+        - sale
+        - install
+        - registration
+        - signup
+      example: "sale"
+
+    CostModel:
+      type: string
+      enum:
+        - CPA
+        - CPC
+        - CPM
+      example: "CPA"
+
+# ============================================================================
+# CAMPAIGN MANAGEMENT SCHEMAS
+# ============================================================================
+
+    CampaignResource:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "camp_123"
+        name:
+          type: string
+          example: "Summer Sale Campaign"
+        description:
+          type: string
+          example: "High-converting summer promotion"
+        status:
+          $ref: '#/components/schemas/CampaignStatus'
+        schedule:
+          $ref: '#/components/schemas/CampaignSchedule'
+        urls:
+          $ref: '#/components/schemas/CampaignURLs'
+        financial:
+          $ref: '#/components/schemas/CampaignFinancial'
+        performance:
+          $ref: '#/components/schemas/CampaignPerformance'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        _links:
+          $ref: '#/components/schemas/CampaignLinks'
+      required:
+        - id
+        - name
+        - status
+        - urls
+        - createdAt
+        - updatedAt
+
+    CampaignSchedule:
+      type: object
+      properties:
+        startDate:
+          type: string
+          format: date-time
+        endDate:
+          type: string
+          format: date-time
+
+    CampaignURLs:
+      type: object
+      properties:
+        safePage:
+          type: string
+          format: uri
+          example: "https://example.com/safe-landing"
+        offerPage:
+          type: string
+          format: uri
+          example: "https://example.com/offer"
+      required:
+        - safePage
+        - offerPage
+
+    CampaignFinancial:
+      type: object
+      properties:
+        costModel:
+          $ref: '#/components/schemas/CostModel'
+        payout:
+          $ref: '#/components/schemas/Money'
+        dailyBudget:
+          $ref: '#/components/schemas/Money'
+        totalBudget:
+          $ref: '#/components/schemas/Money'
+        spent:
+          $ref: '#/components/schemas/Money'
+      required:
+        - costModel
+        - payout
+        - spent
+
+    CampaignPerformance:
+      type: object
+      properties:
+        clicks:
+          type: integer
+          format: int64
+          example: 1250
+        conversions:
+          type: integer
+          format: int64
+          example: 45
+        ctr:
+          type: number
+          format: float
+          example: 0.032
+        cr:
+          type: number
+          format: float
+          example: 0.036
+        epc:
+          $ref: '#/components/schemas/Money'
+        roi:
+          type: number
+          format: float
+          example: 2.45
+      required:
+        - clicks
+        - conversions
+        - ctr
+        - cr
+        - epc
+        - roi
+
+    CampaignLinks:
+      type: object
+      properties:
+        self:
+          type: string
+          format: uri
+          example: "/api/v1/campaigns/camp_123"
+        landingPages:
+          type: string
+          format: uri
+          example: "/api/v1/campaigns/camp_123/landing-pages"
+        offers:
+          type: string
+          format: uri
+          example: "/api/v1/campaigns/camp_123/offers"
+        targeting:
+          type: string
+          format: uri
+          example: "/api/v1/campaigns/camp_123/targeting"
+        analytics:
+          type: string
+          format: uri
+          example: "/api/v1/campaigns/camp_123/analytics"
+
+    CampaignCollection:
+      type: object
+      properties:
+        campaigns:
+          type: array
+          items:
+            $ref: '#/components/schemas/CampaignSummary'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+      required:
+        - campaigns
+        - pagination
+
+    CampaignSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "camp_123"
+        name:
+          type: string
+          example: "Summer Sale Campaign"
+        status:
+          $ref: '#/components/schemas/CampaignStatus'
+        performance:
+          $ref: '#/components/schemas/CampaignPerformance'
+        _links:
+          $ref: '#/components/schemas/CampaignLinks'
+      required:
+        - id
+        - name
+        - status
+        - performance
+
+# ============================================================================
+# LANDING PAGE SCHEMAS
+# ============================================================================
+
+    LandingPageResource:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "lp_456"
+        campaignId:
+          type: string
+          example: "camp_123"
+        name:
+          type: string
+          example: "Main Squeeze Page"
+        url:
+          type: string
+          format: uri
+          example: "https://example.com/page1"
+        pageType:
+          $ref: '#/components/schemas/PageType'
+        weight:
+          type: integer
+          minimum: 0
+          example: 70
+        isActive:
+          type: boolean
+          example: true
+        isControl:
+          type: boolean
+          example: false
+        performance:
+          $ref: '#/components/schemas/LandingPagePerformance'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - campaignId
+        - name
+        - url
+        - pageType
+        - weight
+        - isActive
+        - isControl
+        - createdAt
+        - updatedAt
+
+    LandingPagePerformance:
+      type: object
+      properties:
+        impressions:
+          type: integer
+          format: int64
+          example: 5000
+        clicks:
+          type: integer
+          format: int64
+          example: 250
+        conversions:
+          type: integer
+          format: int64
+          example: 15
+        ctr:
+          type: number
+          format: float
+          example: 0.05
+        cr:
+          type: number
+          format: float
+          example: 0.06
+        epc:
+          $ref: '#/components/schemas/Money'
+      required:
+        - impressions
+        - clicks
+        - conversions
+        - ctr
+        - cr
+        - epc
+
+# ============================================================================
+# CAMPAIGN OFFER SCHEMAS
+# ============================================================================
+
+    CampaignOfferResource:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "offer_789"
+        campaignId:
+          type: string
+          example: "camp_123"
+        name:
+          type: string
+          example: "Premium Product"
+        url:
+          type: string
+          format: uri
+          example: "https://affiliate.com/offer/123"
+        offerType:
+          $ref: '#/components/schemas/OfferType'
+        weight:
+          type: integer
+          minimum: 0
+          example: 60
+        isActive:
+          type: boolean
+          example: true
+        isControl:
+          type: boolean
+          example: false
+        payout:
+          $ref: '#/components/schemas/Money'
+        revenueShare:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          example: 0.15
+        costPerClick:
+          $ref: '#/components/schemas/Money'
+        performance:
+          $ref: '#/components/schemas/OfferPerformance'
+        autoPause:
+          $ref: '#/components/schemas/OfferAutoPause'
+        externalId:
+          type: string
+          example: "AFF_123"
+        partnerNetwork:
+          type: string
+          example: "MaxBounty"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - campaignId
+        - name
+        - url
+        - offerType
+        - weight
+        - isActive
+        - isControl
+        - payout
+        - createdAt
+        - updatedAt
+
+# ============================================================================
+# ANALYTICS SCHEMAS
+# ============================================================================
+
+    CampaignAnalytics:
+      type: object
+      properties:
+        campaignId:
+          type: string
+          example: "camp_123"
+        timeRange:
+          $ref: '#/components/schemas/AnalyticsTimeRange'
+        metrics:
+          $ref: '#/components/schemas/AnalyticsMetrics'
+        breakdowns:
+          $ref: '#/components/schemas/AnalyticsBreakdowns'
+      required:
+        - campaignId
+        - timeRange
+        - metrics
+
+    AnalyticsTimeRange:
+      type: object
+      properties:
+        startDate:
+          type: string
+          format: date
+          example: "2024-01-01"
+        endDate:
+          type: string
+          format: date
+          example: "2024-01-31"
+        granularity:
+          type: string
+          enum: [hour, day, week, month]
+          default: day
+          example: "day"
+      required:
+        - startDate
+        - endDate
+        - granularity
+
+    AnalyticsMetrics:
+      type: object
+      properties:
+        clicks:
+          type: integer
+          format: int64
+          example: 5000
+        uniqueClicks:
+          type: integer
+          format: int64
+          example: 4800
+        conversions:
+          type: integer
+          format: int64
+          example: 150
+        revenue:
+          $ref: '#/components/schemas/Money'
+        cost:
+          $ref: '#/components/schemas/Money'
+        ctr:
+          type: number
+          format: float
+          example: 0.025
+        cr:
+          type: number
+          format: float
+          example: 0.03
+        epc:
+          $ref: '#/components/schemas/Money'
+        roi:
+          type: number
+          format: float
+          example: 2.15
+      required:
+        - clicks
+        - uniqueClicks
+        - conversions
+        - revenue
+        - cost
+        - ctr
+        - cr
+        - epc
+        - roi
+
+    AnalyticsBreakdowns:
+      type: object
+      properties:
+        byDate:
+          type: array
+          items:
+            $ref: '#/components/schemas/DateMetrics'
+        byTrafficSource:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrafficSourceMetrics'
+        byLandingPage:
+          type: array
+          items:
+            $ref: '#/components/schemas/LandingPageMetrics'
+        byOffer:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfferMetrics'
+        byGeography:
+          type: array
+          items:
+            $ref: '#/components/schemas/GeographyMetrics'
+        byDevice:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeviceMetrics'
+
+    DateMetrics:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2024-01-15"
+        metrics:
+          $ref: '#/components/schemas/AnalyticsMetrics'
+      required:
+        - date
+        - metrics
+
+    TrafficSourceMetrics:
+      type: object
+      properties:
+        trafficSourceId:
+          type: string
+          example: "ts_google"
+        name:
+          type: string
+          example: "Google Ads"
+        metrics:
+          $ref: '#/components/schemas/AnalyticsMetrics'
+      required:
+        - trafficSourceId
+        - name
+        - metrics
+
+    LandingPageMetrics:
+      type: object
+      properties:
+        landingPageId:
+          type: string
+          example: "lp_456"
+        name:
+          type: string
+          example: "Main Landing Page"
+        metrics:
+          $ref: '#/components/schemas/AnalyticsMetrics'
+      required:
+        - landingPageId
+        - name
+        - metrics
+
+    GeographyMetrics:
+      type: object
+      properties:
+        country:
+          type: string
+          example: "US"
+        metrics:
+          $ref: '#/components/schemas/AnalyticsMetrics'
+      required:
+        - country
+        - metrics
+
+    DeviceMetrics:
+      type: object
+      properties:
+        device:
+          type: string
+          example: "desktop"
+        metrics:
+          $ref: '#/components/schemas/AnalyticsMetrics'
+      required:
+        - device
+        - metrics
+
+# ============================================================================
+# REQUEST SCHEMAS
+# ============================================================================
+
+    CreateCampaignRequest:
+      type: object
+      properties:
+        name:
+          nullable: true
+        description:
+          nullable: true
+        whiteUrl:
+          nullable: true
+        blackUrl:
+          nullable: true
+        costModel:
+          nullable: true
+        payout:
+          nullable: true
+        dailyBudget:
+          nullable: true
+        totalBudget:
+          nullable: true
+        startDate:
+          nullable: true
+        endDate:
+          nullable: true
+      # No required fields - allow testing with various combinations
+
+
+    UpdateCampaignRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 1000
+        whiteUrl:
+          type: string
+          format: uri
+        blackUrl:
+          type: string
+          format: uri
+        payout:
+          $ref: '#/components/schemas/Money'
+        dailyBudget:
+          $ref: '#/components/schemas/Money'
+        totalBudget:
+          $ref: '#/components/schemas/Money'
+        startDate:
+          type: string
+          format: date-time
+        endDate:
+          type: string
+          format: date-time
+
+# ============================================================================
+# API PATHS
+# ============================================================================
+
+paths:
+
+  # ============================================================================
+  # HEALTH CHECK
+  # ============================================================================
+
+  /health:
+    get:
+      summary: Health check
+      description: Get the health status of the API service
+      operationId: get_health
+      tags: [Health]
+      security: []  # Public endpoint - no authentication required
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+                  service:
+                    type: string
+                    example: "domain-driven-api-mock"
+
+  # ============================================================================
+  # CAMPAIGN MANAGEMENT
+  # ============================================================================
+
+  /campaigns:
+    get:
+      summary: List campaigns
+      description: |
+        Get a paginated list of campaigns accessible to the authenticated user.
+
+        **Supported Methods**: GET, POST
+        **Rate Limit**: 60 requests/minute (authenticated)
+      operationId: get_campaigns
+      tags: [Campaigns]
+      security: []  # Disabled for contract testing - auth tested separately
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignCollection'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      summary: Create campaign
+      description: |
+        Create a new advertising campaign with specified parameters.
+
+        **Supported Methods**: GET, POST
+        **Rate Limit**: 30 requests/minute (authenticated)
+        **Content-Type**: application/json
+      operationId: post_campaigns
+      tags: [Campaigns]
+      security: []  # Disabled for contract testing - auth tested separately
+      requestBody:
+        required: false  # Make optional to allow testing without body
+        content:
+          application/json:
+            schema:
+              {}  # Accept any JSON - validation done in handler
+      responses:
+        '201':
+          description: Campaign created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignResource'
+          headers:
+            Location:
+              description: URL of the created campaign
+              schema:
+                type: string
+                format: uri
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /campaigns/{campaignId}:
+    get:
+      summary: Get campaign
+      description: |
+        Get detailed information about a specific campaign including performance metrics.
+
+        **Supported Methods**: GET, PUT, DELETE
+        **Rate Limit**: 120 requests/minute (authenticated)
+      operationId: get_campaigns_campaign_id
+      tags: [Campaigns]
+      security:
+        - bearerAuth: [campaign:read]
+        - oauth2: [campaign:read]
+      parameters:
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "camp_123"
+      responses:
+        '200':
+          description: Campaign details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignResource'
+        '404':
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - no access to this campaign
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      summary: Update campaign
+      description: Update an existing campaign
+      operationId: put_campaigns_campaign_id
+      tags: [Campaigns]
+      security:
+        - bearerAuth: [campaign:write]
+        - oauth2: [campaign:write]
+      parameters:
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "camp_123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCampaignRequest'
+      responses:
+        '200':
+          description: Campaign updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignResource'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - cannot modify this campaign
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      summary: Delete campaign
+      description: Delete a campaign (admin only, typically soft delete)
+      operationId: delete_campaigns_campaign_id
+      tags: [Campaigns]
+      security:
+        - bearerAuth: [campaign:delete]
+        - oauth2: [campaign:delete]
+      parameters:
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "camp_123"
+      responses:
+        '204':
+          description: Campaign deleted successfully
+        '401':
+          description: Unauthorized - authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ============================================================================
+  # CAMPAIGN STATE MANAGEMENT
+  # ============================================================================
+
+  /campaigns/{campaignId}/pause:
+    post:
+      summary: Pause campaign
+      description: Pause an active campaign
+      operationId: post_campaigns_campaign_id_pause
+      tags: [Campaigns]
+      security:
+        - bearerAuth: [campaign:write]
+        - oauth2: [campaign:write]
+      parameters:
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "camp_123"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+                  example: "Temporary budget adjustment"
+      responses:
+        '200':
+          description: Campaign paused successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignResource'
+        '400':
+          description: Invalid request or campaign cannot be paused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /campaigns/{campaignId}/resume:
+    post:
+      summary: Resume campaign
+      description: Resume a paused campaign
+      operationId: post_campaigns_campaign_id_resume
+      tags: [Campaigns]
+      security:
+        - bearerAuth: [campaign:write]
+        - oauth2: [campaign:write]
+      parameters:
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "camp_123"
+      responses:
+        '200':
+          description: Campaign resumed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignResource'
+        '400':
+          description: Invalid request or campaign cannot be resumed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ============================================================================
+  # LANDING PAGES
+  # ============================================================================
+
+  /campaigns/{campaignId}/landing-pages:
+    get:
+      summary: List landing pages
+      description: Get landing pages for a campaign
+      operationId: get_campaigns_campaign_id_landing_pages
+      tags: [Landing Pages]
+      security:
+        - bearerAuth: [campaign:read]
+        - oauth2: [campaign:read]
+      parameters:
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "camp_123"
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Landing pages list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  landingPages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LandingPageResource'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      summary: Create landing page
+      description: Add a landing page to a campaign
+      operationId: post_campaigns_campaign_id_landing_pages
+      tags: [Landing Pages]
+      security:
+        - bearerAuth: [campaign:write]
+        - oauth2: [campaign:write]
+      parameters:
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "camp_123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                  example: "Main Squeeze Page"
+                url:
+                  type: string
+                  format: uri
+                  example: "https://example.com/page1"
+                pageType:
+                  $ref: '#/components/schemas/PageType'
+                weight:
+                  type: integer
+                  minimum: 0
+                  default: 100
+                  example: 70
+              required:
+                - name
+                - url
+                - pageType
+      responses:
+        '201':
+          description: Landing page created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LandingPageResource'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ============================================================================
+  # CAMPAIGN OFFERS
+  # ============================================================================
+
+  /campaigns/{campaignId}/offers:
+    get:
+      summary: List campaign offers
+      description: Get a list of offers for a specific campaign
+      operationId: get_campaign_offers
+      tags: [Offers]
+      security:
+        - bearerAuth: [campaign:read]
+        - oauth2: [campaign:read]
+      parameters:
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "camp_123"
+      responses:
+        '200':
+          description: List of campaign offers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CampaignOfferResource'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      summary: Create campaign offer
+      description: Add a new offer to a campaign
+      operationId: post_campaign_offer
+      tags: [Offers]
+      security:
+        - bearerAuth: [campaign:write]
+        - oauth2: [campaign:write]
+      parameters:
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "camp_123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CampaignOfferResource' # Assuming CampaignOfferResource can also be a request body
+      responses:
+        '201':
+          description: Campaign offer created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignOfferResource'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ============================================================================
+  # ANALYTICS
+  # ============================================================================
+
+  /campaigns/{campaignId}/analytics:
+    get:
+      summary: Get campaign analytics
+      description: Get detailed analytics and performance metrics for a campaign
+      operationId: get_campaigns_campaign_id_analytics
+      tags: [Analytics]
+      security:
+        - bearerAuth: [analytics:read]
+        - oauth2: [analytics:read]
+      parameters:
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "camp_123"
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date
+            example: "2024-01-01"
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date
+            example: "2024-01-31"
+        - name: granularity
+          in: query
+          schema:
+            type: string
+            enum: [hour, day, week, month]
+            default: day
+            example: "day"
+        - name: breakdown
+          in: query
+          schema:
+            type: string
+            enum: [date, traffic_source, landing_page, offer, geography, device]
+            example: "date"
+      responses:
+        '200':
+          description: Campaign analytics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignAnalytics'
+        '400':
+          description: Invalid date range or parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Campaign not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - no access to campaign analytics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+# ============================================================================
+# CLICK TRACKING ENDPOINTS (PUBLIC)
+# ============================================================================
+
+  /click:
+    get:
+      summary: Track click and redirect to offer
+      description: |
+        **PUBLIC ENDPOINT** - Click tracking and redirection service.
+
+        Records comprehensive click data including fraud detection and redirects users
+        to either the safe page (white URL) or offer page (black URL) based on
+        real-time fraud analysis and campaign targeting rules.
+
+        **Supported Methods**: GET
+        **Rate Limit**: 1000 requests/minute (public endpoint)
+        **Authentication**: Not required (public tracking endpoint)
+        **Redirect Behavior**: HTTP 302 redirect to offer or safe page
+
+        ## Tracking Parameters
+        - **sub1-sub5**: 5-level deep tracking for creative optimization
+        - **aff_sub-aff_sub5**: Affiliate network tracking parameters
+        - **click_id**: Unique click identifier for postback matching
+        - **landing_page_id/campaign_offer_id**: Direct targeting parameters
+
+        ## Fraud Detection
+        - Bot pattern detection in user agent
+        - IP blacklisting
+        - Suspicious referrer analysis
+        - Rate limiting per IP
+      operationId: get_click
+      tags:
+        - Traffic
+      security: []
+      parameters:
+        - name: cid
+          in: query
+          required: false
+          schema:
+            type: integer
+            maximum: 2147483647
+            default: 123
+          description: |
+            Campaign ID to attribute the click to.
+
+            **Default**: 123 (for testing/development)
+            **Validation**: Must be a positive integer
+          example: 123
+        # Sub-tracking parameters (5-level deep tracking)
+        - name: sub1
+          in: query
+          schema:
+            type: string
+            maxLength: 255
+            pattern: '^[a-zA-Z0-9._-]*$'
+          description: |
+            Level 1 tracking parameter - typically Creative/Ad ID.
+
+            **Examples**: fb_ad_15, banner_728x90, email_campaign_001
+            **Use**: Creative optimization and performance tracking
+          example: "fb_ad_15"
+        - name: sub2
+          in: query
+          schema:
+            type: string
+            maxLength: 255
+            pattern: '^[a-zA-Z0-9._-]*$'
+          description: |
+            Level 2 tracking parameter - typically Traffic Source.
+
+            **Examples**: facebook, google, taboola, email
+            **Use**: Source attribution and media buying optimization
+          example: "facebook"
+        - name: sub3
+          in: query
+          schema:
+            type: string
+            maxLength: 255
+            pattern: '^[a-zA-Z0-9._-]*$'
+          description: |
+            Level 3 tracking parameter - typically Ad Set/Campaign Group.
+
+            **Examples**: prospecting, retargeting, lookalike_audience
+            **Use**: Campaign structure optimization
+          example: "adset_12"
+        - name: sub4
+          in: query
+          schema:
+            type: string
+            maxLength: 255
+            pattern: '^[a-zA-Z0-9._-]*$'
+          description: |
+            Level 4 tracking parameter - typically Ad Version/Creative Type.
+
+            **Examples**: video1, carousel, single_image, cta_buy_now
+            **Use**: Creative testing and A/B optimization
+          example: "video1"
+        - name: sub5
+          in: query
+          schema:
+            type: string
+            maxLength: 255
+            pattern: '^[a-zA-Z0-9._-]*$'
+          description: |
+            Level 5 tracking parameter - typically Audience/Keyword.
+
+            **Examples**: lookalike78, interest_gaming, keyword_cloud_computing
+            **Use**: Audience segmentation and keyword optimization
+          example: "lookalike78"
+        # Affiliate network parameters
+        - name: click_id
+          in: query
+          schema:
+            type: string
+            maxLength: 255
+            pattern: '^[a-zA-Z0-9._-]*$'
+          description: |
+            Unique click identifier for postback/conversion matching.
+
+            **Important**: Must be unique per click for proper conversion attribution
+            **Use**: Server-to-server postback integration with affiliate networks
+          example: "USERCLICK123"
+        - name: aff_sub
+          in: query
+          schema:
+            type: string
+            maxLength: 255
+            pattern: '^[a-zA-Z0-9._-]*$'
+          description: Primary affiliate sub-identifier
+          example: "aff_sub_123"
+        - name: aff_sub2
+          in: query
+          schema:
+            type: string
+            maxLength: 255
+            pattern: '^[a-zA-Z0-9._-]*$'
+          description: Secondary affiliate sub-identifier
+        - name: aff_sub3
+          in: query
+          schema:
+            type: string
+            maxLength: 255
+            pattern: '^[a-zA-Z0-9._-]*$'
+          description: Tertiary affiliate sub-identifier
+        - name: aff_sub4
+          in: query
+          schema:
+            type: string
+            maxLength: 255
+            pattern: '^[a-zA-Z0-9._-]*$'
+          description: Quaternary affiliate sub-identifier
+        - name: aff_sub5
+          in: query
+          schema:
+            type: string
+            maxLength: 255
+            pattern: '^[a-zA-Z0-9._-]*$'
+          description: Quinary affiliate sub-identifier
+        # Direct targeting parameters
+        - name: landing_page_id
+          in: query
+          schema:
+            type: integer
+            maximum: 2147483647
+          description: |
+            Specific landing page ID to force redirect to.
+
+            **Use**: Direct linking, A/B testing bypass, troubleshooting
+            **Note**: Overrides automatic landing page selection
+          example: 456
+        - name: campaign_offer_id
+          in: query
+          schema:
+            type: integer
+            maximum: 2147483647
+          description: |
+            Specific offer ID to force redirect to.
+
+            **Use**: Direct offer linking, testing specific offers
+            **Note**: Overrides automatic offer selection and rotation
+          example: 789
+        - name: traffic_source_id
+          in: query
+          schema:
+            type: integer
+            maximum: 2147483647
+          description: |
+            Traffic source ID for attribution tracking.
+
+            **Use**: Multi-source traffic attribution
+            **Note**: Used for analytics and reporting segmentation
+          example: 101
+      x-code-samples:
+        - lang: curl
+          label: "Basic Facebook Ad Click"
+          source: |
+            curl -L "https://api.advertising-platform.com/v1/click?cid=123&sub1=fb_ad_15&sub2=facebook&sub3=prospecting"
+        - lang: curl
+          label: "Google Ads with Affiliate Tracking"
+          source: |
+            curl -L "https://api.advertising-platform.com/v1/click?cid=456&sub1=google_search&sub2=google&click_id=USER123&aff_sub=network_a"
+        - lang: curl
+          label: "Direct Landing Page Targeting"
+          source: |
+            curl -L "https://api.advertising-platform.com/v1/click?cid=789&landing_page_id=101&campaign_offer_id=202"
+      responses:
+        '302':
+          description: |
+            **SUCCESS** - Click recorded and user redirected.
+
+            Redirects to offer page (valid click) or safe page (fraudulent/invalid click).
+            The redirect preserves all tracking parameters for downstream attribution.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+              description: |
+                Redirect destination URL.
+
+                **Valid clicks**: Offer/affiliate page URL
+                **Invalid clicks**: Safe page (white URL) to prevent fraud
+              example: "https://example.com/offer?click_id=123e4567-e89b-12d3-a456-426614174000"
+        '200':
+          description: |
+            **TESTING MODE** - HTML page content when redirects are not followed.
+
+            Used for API testing tools that don't follow redirects automatically.
+            Contains click information for debugging purposes.
+          content:
+            text/html:
+              schema:
+                type: string
+                example: "<html><body><h1>Offer Page</h1><p>Click ID: 123e4567-e89b-12d3-a456-426614174000</p><p>Status: Valid</p></body></html>"
+        '404':
+          description: |
+            **REDIRECT ERROR** - Campaign or destination URL not found.
+
+            Occurs when campaign ID is invalid or configured URLs are unreachable.
+          content:
+            text/html:
+              schema:
+                type: string
+                example: "<html><body><h1>Error</h1><p>Campaign not found</p></body></html>"
+        '400':
+          description: |
+            **VALIDATION ERROR** - Invalid parameters or campaign configuration.
+
+            Check campaign ID format and required parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: "VALIDATION_ERROR"
+                  message: "Invalid campaign ID"
+                  details:
+                    cid: "Campaign ID must be a positive integer"
+                requestId: "req_1234567890abcdef"
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /click/{clickId}:
+    get:
+      summary: Get click details
+      description: Retrieve details of a specific click (for debugging and analytics)
+      operationId: get_click_click_id
+      tags:
+        - Traffic
+      security:
+        - bearerAuth: []
+        - oauth2:
+            - traffic:read
+      parameters:
+        - name: clickId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Click ID
+          example: "123e4567-e89b-12d3-a456-426614174000"
+      responses:
+        '200':
+          description: Click details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClickRecord'
+        '404':
+          description: Click not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - no access to click data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /clicks:
+    get:
+      summary: List clicks
+      description: Retrieve a list of clicks with optional filtering
+      operationId: get_clicks
+      tags:
+        - Traffic
+      security:
+        - bearerAuth: []
+        - oauth2:
+            - traffic:read
+        - apiKey: []
+      parameters:
+        - name: cid
+          in: query
+          schema:
+            type: integer
+          description: Filter by campaign ID
+          example: 123
+        - name: sub1
+          in: query
+          schema:
+            type: string
+          description: Filter by sub1 (creative ID)
+          example: "fb_ad_15"
+        - name: sub2
+          in: query
+          schema:
+            type: string
+          description: Filter by sub2 (traffic source)
+          example: "facebook"
+        - name: is_valid
+          in: query
+          schema:
+            type: integer
+            enum: [0, 1]
+          description: Filter by validity (0=invalid, 1=valid)
+          example: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+          description: Maximum number of clicks to return
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of clicks to skip
+      responses:
+        '200':
+          description: List of clicks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClickList'
+        '400':
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error (invalid query parameters)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - no access to click data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            text/html:
+              schema:
+                type: string
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+# ============================================================================
+# TAGS
+# ============================================================================
+
+tags:
+  - name: Health
+    description: |
+      API health check and status monitoring endpoints.
+  - name: Campaigns
+    description: |
+      Campaign management operations including CRUD, state management (pause/resume),
+      and performance tracking. Supports A/B testing and budget management.
+  - name: Landing Pages
+    description: |
+      Landing page management within campaigns including creation, rotation,
+      A/B testing, and performance optimization.
+  - name: Offers
+    description: |
+      Campaign offer management including creation, rotation, payout configuration,
+      and performance optimization.
+  - name: Analytics
+    description: |
+      Comprehensive performance analytics with multi-dimensional breakdowns
+      including date, traffic source, landing page, offer, geography, and device.
+  - name: Traffic
+    description: |
+      Traffic acquisition and click tracking with fraud detection,
+      multi-level sub-tracking, and conversion attribution.
+  - name: Conversions
+    description: |
+      Conversion tracking and partner postbacks for affiliate network integration
+      and revenue optimization.
+
+# ============================================================================
+# EXTERNAL DOCUMENTATION AND SUPPORT
+# ============================================================================
+
+externalDocs:
+  description: Domain-Driven Design Documentation
+  url: https://github.com/yourorg/ad-platform-ddd
+
+# Support and contact information
+x-support:
+  contact:
+    name: API Support Team
+    email: api-support@advertising-platform.com
+    url: https://support.advertising-platform.com
+  termsOfService: https://advertising-platform.com/terms
+  sla:
+    uptime: "99.9%"
+    responseTime: "< 200ms P95"
+    supportHours: "24/7"
