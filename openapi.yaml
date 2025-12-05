@@ -30,12 +30,6 @@ servers:
   - url: https://staging-api.advertising-platform.com/v1
     description: Staging server
 
-security:
-  - bearerAuth: []
-  - oauth2:
-      - campaign:read
-      - campaign:write
-      - analytics:read
 
 # Global rate limiting (applied to all endpoints)
 x-rate-limits:
@@ -73,11 +67,24 @@ components:
           authorizationUrl: https://auth.advertising-platform.com/oauth/authorize
           tokenUrl: https://auth.advertising-platform.com/oauth/token
           scopes:
+            # Campaign scopes
             campaign:read: Read campaign data
             campaign:write: Create and modify campaigns
             campaign:delete: Delete campaigns
+
+            # Landing page scopes (NEW)
+            landing:read: Read landing pages
+            landing:write: Create and modify landing pages
+
+            # Offer scopes (NEW)
+            offers:read: Read offers
+            offers:write: Create and modify offers
+
+            # Analytics and traffic
             analytics:read: Read analytics and performance data
             traffic:read: Read traffic and click data
+
+            # Admin
             admin: Full administrative access
 
 # ============================================================================
@@ -232,54 +239,65 @@ components:
         sub1:
           type: string
           maxLength: 255
+          nullable: true
           description: "Creative ID"
           example: "fb_ad_15"
         sub2:
           type: string
           maxLength: 255
+          nullable: true
           description: "Traffic source"
           example: "facebook"
         sub3:
           type: string
           maxLength: 255
+          nullable: true
           description: "Ad set/company"
           example: "adset_12"
         sub4:
           type: string
           maxLength: 255
+          nullable: true
           description: "Ad version"
           example: "video1"
         sub5:
           type: string
           maxLength: 255
+          nullable: true
           description: "Keyword/audience"
           example: "lookalike78"
         # Affiliate network parameters
         clickId:
           type: string
           maxLength: 255
+          nullable: true
           description: "Click ID for postbacks"
           example: "USERCLICK123"
         affSub:
           type: string
           maxLength: 255
+          nullable: true
           description: "Affiliate sub ID"
           example: "aff_sub_123"
         affSub2:
           type: string
           maxLength: 255
+          nullable: true
           description: "Affiliate sub ID 2"
         affSub3:
           type: string
           maxLength: 255
+          nullable: true
           description: "Affiliate sub ID 3"
         affSub4:
           type: string
           maxLength: 255
+          nullable: true
           description: "Affiliate sub ID 4"
         affSub5:
           type: string
           maxLength: 255
+          nullable: true
           description: "Affiliate sub ID 5"
         # Fraud detection
         fraudScore:
@@ -316,6 +334,7 @@ components:
           example: 101
         conversionType:
           $ref: '#/components/schemas/ConversionType'
+          nullable: true
       required:
         - id
         - cid
@@ -627,23 +646,18 @@ components:
       properties:
         self:
           type: string
-          format: uri
           example: "/api/v1/campaigns/camp_123"
         landingPages:
           type: string
-          format: uri
           example: "/api/v1/campaigns/camp_123/landing-pages"
         offers:
           type: string
-          format: uri
           example: "/api/v1/campaigns/camp_123/offers"
         targeting:
           type: string
-          format: uri
           example: "/api/v1/campaigns/camp_123/targeting"
         analytics:
           type: string
-          format: uri
           example: "/api/v1/campaigns/camp_123/analytics"
 
     CampaignCollection:
@@ -1124,7 +1138,9 @@ paths:
         **Rate Limit**: 60 requests/minute (authenticated)
       operationId: get_campaigns
       tags: [Campaigns]
-      security: []  # Disabled for contract testing - auth tested separately
+      security:
+        - bearerAuth: [campaign:read]
+        - oauth2: [campaign:read]
       parameters:
         - name: page
           in: query
@@ -1184,7 +1200,9 @@ paths:
         **Content-Type**: application/json
       operationId: post_campaigns
       tags: [Campaigns]
-      security: []  # Disabled for contract testing - auth tested separately
+      security:
+        - bearerAuth: [campaign:write]
+        - oauth2: [campaign:write]
       requestBody:
         required: false  # Make optional to allow testing without body
         content:
@@ -1517,8 +1535,8 @@ paths:
       operationId: get_campaigns_campaign_id_landing_pages
       tags: [Landing Pages]
       security:
-        - bearerAuth: [campaign:read]
-        - oauth2: [campaign:read]
+        - bearerAuth: [landing:read]
+        - oauth2: [landing:read]
       parameters:
         - name: campaignId
           in: path
@@ -1581,8 +1599,8 @@ paths:
       operationId: post_campaigns_campaign_id_landing_pages
       tags: [Landing Pages]
       security:
-        - bearerAuth: [campaign:write]
-        - oauth2: [campaign:write]
+        - bearerAuth: [landing:write]
+        - oauth2: [landing:write]
       parameters:
         - name: campaignId
           in: path
@@ -1660,8 +1678,8 @@ paths:
       operationId: get_campaign_offers
       tags: [Offers]
       security:
-        - bearerAuth: [campaign:read]
-        - oauth2: [campaign:read]
+        - bearerAuth: [offers:read]
+        - oauth2: [offers:read]
       parameters:
         - name: campaignId
           in: path
@@ -1714,8 +1732,8 @@ paths:
       operationId: post_campaign_offer
       tags: [Offers]
       security:
-        - bearerAuth: [campaign:write]
-        - oauth2: [campaign:write]
+        - bearerAuth: [offers:write]
+        - oauth2: [offers:write]
       parameters:
         - name: campaignId
           in: path
@@ -1774,6 +1792,7 @@ paths:
       security:
         - bearerAuth: [analytics:read]
         - oauth2: [analytics:read]
+        - apiKey: []  # NEW - for partners
       parameters:
         - name: campaignId
           in: path
@@ -1884,6 +1903,7 @@ paths:
           required: false
           schema:
             type: integer
+            minimum: 1
             maximum: 2147483647
             default: 123
           description: |
@@ -2007,6 +2027,7 @@ paths:
           in: query
           schema:
             type: integer
+            minimum: 1
             maximum: 2147483647
           description: |
             Specific landing page ID to force redirect to.
@@ -2018,6 +2039,7 @@ paths:
           in: query
           schema:
             type: integer
+            minimum: 1
             maximum: 2147483647
           description: |
             Specific offer ID to force redirect to.
@@ -2029,6 +2051,7 @@ paths:
           in: query
           schema:
             type: integer
+            minimum: 1 # Added minimum constraint
             maximum: 2147483647
           description: |
             Traffic source ID for attribution tracking.
@@ -2119,9 +2142,9 @@ paths:
       tags:
         - Traffic
       security:
-        - bearerAuth: []
-        - oauth2:
-            - traffic:read
+        - bearerAuth: [traffic:read]
+        - oauth2: [traffic:read]
+        - apiKey: []
       parameters:
         - name: clickId
           in: path
@@ -2166,14 +2189,17 @@ paths:
   /clicks:
     get:
       summary: List clicks
-      description: Retrieve a list of clicks with optional filtering
+      description: |-
+        Retrieve a list of clicks with optional filtering.
+        
+        **Authentication**: Supports multiple methods (Bearer token, OAuth2, or API Key).
+        Any valid authentication method is acceptable (OR logic).
       operationId: get_clicks
       tags:
         - Traffic
       security:
-        - bearerAuth: []
-        - oauth2:
-            - traffic:read
+        - bearerAuth: [traffic:read]
+        - oauth2: [traffic:read]
         - apiKey: []
       parameters:
         - name: cid
@@ -2234,7 +2260,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '401':
-          description: Unauthorized - authentication required
+          description: |-
+            Unauthorized - authentication required or invalid.
+            
+            Returned when:
+            - No authentication headers provided
+            - Invalid Bearer token
+            - Invalid API key
+            - Invalid OAuth2 token
           content:
             application/json:
               schema:
